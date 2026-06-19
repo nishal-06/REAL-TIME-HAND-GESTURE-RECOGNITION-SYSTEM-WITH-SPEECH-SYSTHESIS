@@ -1,0 +1,158 @@
+code = """import cv2
+import numpy as np
+import pyttsx3
+import threading
+import math
+
+engine = pyttsx3.init()
+engine.setProperty('rate', 150)
+
+def speak(word):
+    threading.Thread(target=lambda: (engine.say(word), engine.runAndWait()), daemon=True).start()
+
+def get_hand_mask(frame):
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+    upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+    mask1 = cv2.inRange(hsv, lower_skin, upper_skin)
+    
+    lower_skin2 = np.array([170, 20, 70], dtype=np.uint8)
+    upper_skin2 = np.array([180, 255, 255], dtype=np.uint8)
+    mask2 = cv2.inRange(hsv, lower_skin2, upper_skin2)
+    
+    mask = mask1 | mask2
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    return mask
+
+def detect_gesture(contour, frame_h, frame_w):
+    x, y, w, h = cv2.boundingRect(contour)
+    area = cv2.contourArea(contour)
+    
+    if area < 1500:
+        return None, 0.0
+    
+    hull = cv2.convexHull(contour)
+    hull_area = cv2.contourArea(hull)
+    
+    if hull_area == 0:
+        return None, 0.0
+    
+    solidity = float(area) / hull_area
+    hand_pos_y = y / frame_h
+    hand_pos_x = x / frame_w
+    aspect_ratio = float(w) / h if h > 0 else 0
+    
+    print(f"Area: {area:.0f} | Solid: {solidity:.3f} | Pos_Y: {hand_pos_y:.2f} | Aspect: {aspect_ratio:.2f}")
+    
+    if solidity > 0.92 and area < 4000:
+        return 'FIST', 0.92
+    
+    elif solidity > 0.92 and area >= 8000:
+        if hand_pos_y > 0.6:
+            return 'SORRY', 0.88
+        else:
+            return 'GOOD', 0.90
+    
+    elif solidity < 0.65 and area >= 6000:
+        return 'HELLO', 0.90
+    
+    elif solidity < 0.62 and area >= 8000:
+        return 'HELP', 0.89
+    
+    elif solidity > 0.75 and solidity < 0.85 and area > 3000 and area < 7000:
+        return 'VICTORY', 0.85
+    
+    elif solidity > 0.70 and solidity < 0.80 and area >= 5000 and area < 8000:
+        if hand_pos_y < 0.4:
+            return 'THANK_YOU', 0.86
+        else:
+            return 'VICTORY', 0.83
+    
+    elif solidity > 0.80 and solidity < 0.90 and area >= 6000:
+        if hand_pos_x > 0.6:
+            return 'AWESOME', 0.84
+        else:
+            return 'SORRY', 0.85
+    
+    return None, 0.5
+
+gesture_to_word = {
+    'HELLO': 'HELLO',
+    'FIST': 'GOOD',
+    'VICTORY': 'VICTORY',
+    'AWESOME': 'AWESOME',
+    'HELP': 'HELP ME',
+    'THANK_YOU': 'THANK YOU',
+    'SORRY': 'SORRY'
+}
+
+cap = cv2.VideoCapture(0)
+print("\\n" + "="*70)
+print("HAND GESTURE RECOGNIZER v2.0 - REDESIGNED")
+print("="*70)
+print("\\nNew Algorithm: Position + Area + Solidity")
+print("Gestures: HELLO | GOOD | VICTORY | AWESOME | HELP | THANK YOU | SORRY")
+print("\\nControls: s=Speak | q=Quit")
+print("="*70 + "\\n")
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    
+    frame = cv2.flip(frame, 1)
+    h, w = frame.shape[:2]
+    
+    mask = get_hand_mask(frame)
+    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    
+    current_gesture = ""
+    current_word = ""
+    max_confidence = 0.0
+    
+    if contours:
+        largest_contour = max(contours, key=cv2.contourArea)
+        area = cv2.contourArea(largest_contour)
+        
+        if area > 1500:
+            gesture, confidence = detect_gesture(largest_contour, h, w)
+            
+            if gesture and confidence > 0.75:
+                current_gesture = gesture
+                current_word = gesture_to_word.get(gesture, gesture)
+                max_confidence = confidence
+                
+                x, y, w_box, h_box = cv2.boundingRect(largest_contour)
+                cv2.rectangle(frame, (x-15, y-15), (x+w_box+15, y+h_box+15), (0, 255, 0), 3)
+                cv2.putText(frame, f'{current_gesture}', (x, y-60), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                cv2.putText(frame, f'{current_word}', (x, y-25), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                cv2.putText(frame, f'{max_confidence*100:.0f}%', (x, y+h_box+35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+    
+    cv2.rectangle(frame, (10, 10), (650, 160), (0, 0, 0), -1)
+    cv2.rectangle(frame, (10, 10), (650, 160), (0, 255, 0), 2)
+    cv2.putText(frame, f'GESTURE: {current_gesture if current_gesture else "---"}', (20, 55), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 255, 0), 2)
+    cv2.putText(frame, f'WORD: {current_word if current_word else "---"}', (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (0, 0, 255), 2)
+    cv2.putText(frame, f'Confidence: {max_confidence*100:.0f}%', (20, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+    
+    cv2.putText(frame, 's=Speak | q=Quit', (10, h-20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+    
+    cv2.imshow('HAND GESTURE RECOGNIZER v2.0', frame)
+    
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
+        break
+    elif key == ord('s') and current_word:
+        print(f"Speaking: {current_word}")
+        speak(current_word)
+
+cap.release()
+cv2.destroyAllWindows()
+print("Done!")
+"""
+
+with open(r"src\hand_gesture_recognizer.py", "w") as f:
+    f.write(code)
+
+print("REDESIGNED v2.0 created!")
